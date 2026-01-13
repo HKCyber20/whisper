@@ -1,6 +1,6 @@
 """
 批量音频转录脚本 - 输出 Markdown 格式
-使用 Whisper medium 模型，适合 8GB 显存显卡
+使用 Whisper turbo 模型，速度快精度高，约 6GB 显存
 """
 
 import os
@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+import torch
 import whisper
 
 
@@ -26,13 +27,13 @@ def transcribe_to_markdown(audio_path: str, model, output_dir: str = None) -> st
     audio_path = Path(audio_path)
     print(f"\n正在转录: {audio_path.name}")
     
-    # 转录，启用词级时间戳以获得更精确的分段
+    # 转录
     result = model.transcribe(
         str(audio_path),
         language="zh",  # 中文，如需其他语言请修改
         task="transcribe",
         verbose=False,
-        word_timestamps=True,
+        word_timestamps=False,  # Windows 下关闭以避免 Triton 警告
     )
     
     # 生成 Markdown 内容
@@ -129,27 +130,47 @@ def main():
     
     print(f"找到 {len(audio_files)} 个音频文件")
     
-    # 加载模型 (medium 模型，高精度，约 5GB 显存)
-    print("\n正在加载 Whisper medium 模型...")
+    # 加载模型 (turbo 模型，速度快精度高，约 6GB 显存)
+    print("\n正在加载 Whisper turbo 模型...")
     print("如果下载失败，可以手动下载模型到 ~/.cache/whisper/ 目录")
-    print("模型下载地址: https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt")
+    print("模型下载地址: https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt")
+    
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        print("警告: 未检测到 CUDA，将使用 CPU 运行（速度较慢）")
+    
     try:
-        model = whisper.load_model("medium", device="cuda")
+        model = whisper.load_model("turbo", device=device)
     except Exception as e:
         print(f"\n模型加载失败: {e}")
         print("\n请尝试:")
         print("1. 检查网络连接")
         print("2. 使用代理: set HTTPS_PROXY=http://127.0.0.1:7890")
-        print("3. 手动下载模型文件到: C:\\Users\\<用户名>\\.cache\\whisper\\medium.pt")
+        print("3. 手动下载模型文件到: C:\\Users\\<用户名>\\.cache\\whisper\\large-v3-turbo.pt")
         sys.exit(1)
     print("模型加载完成")
     
-    # 批量转录
+    # 批量转录（跳过已转录的文件）
+    skipped = 0
     for audio_file in sorted(audio_files):
+        # 检查输出文件是否已存在
+        if output_dir:
+            md_path = Path(output_dir) / f"{audio_file.stem}.md"
+        else:
+            md_path = audio_file.with_suffix(".md")
+        
+        if md_path.exists():
+            print(f"跳过（已存在）: {audio_file.name}")
+            skipped += 1
+            continue
+        
         try:
             transcribe_to_markdown(str(audio_file), model, output_dir)
         except Exception as e:
             print(f"转录失败 {audio_file.name}: {e}")
+    
+    if skipped > 0:
+        print(f"\n跳过 {skipped} 个已转录文件")
     
     print("\n全部完成!")
 
